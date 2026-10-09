@@ -199,16 +199,17 @@ PRINTER_PRESETS = {
     },
     "Drukwerkdeal.nl": {
         "profile": "CoatedFOGRA39",
-        "pdfx1a": False,
-        "pdf_version": "1.4",
-        "gts_label": "PDF/X-1a:2003",
-        "confirmed": False,
-        "explain": "Kon de exacte PDF-/kleurprofieleisen niet van hun site "
-                   "bevestigen (specificaties staan achter een niet-"
-                   "doorzoekbare pagina). Valt terug op veilige standaard-"
-                   "instellingen - check zelf hun 'Aanleveren'-pagina of "
-                   "klantenservice voor zekerheid.",
-        "source": None,
+        "pdfx1a": True,
+        "pdf_version": "1.6",
+        "gts_label": "PDF/X-4:2008",
+        "tac_override": 280,
+        "confirmed": True,
+        "explain": "Drukwerkdeal vraagt bij voorkeur PDF/X-4:2008, kleurprofiel "
+                   "Fogra39, CMYK, max. 280% inktdekking, min. 300 dpi, "
+                   "lettertypes ingesloten/naar paden omgezet, geen "
+                   "snijtekens/extra marge toevoegen (gebruik hun eigen "
+                   "werktekening), geen wachtwoordbeveiliging.",
+        "source": "Drukwerkdeal 'Aanleveren - CMYK Drukwerk' instructiedocument, aangeleverd door gebruiker (rev. 2025-11-26).",
     },
     "FlyerAlarm": {
         "profile": "CoatedFOGRA39",
@@ -848,20 +849,21 @@ with st.sidebar:
                 if pdfx1a_enabled:
                     gts_label = st.selectbox(
                         "PDF/X-variant:",
-                        ["PDF/X-1a:2001", "PDF/X-1a:2003", "PDF/X-3:2003", "PDF/X-4"],
+                        ["PDF/X-1a:2001", "PDF/X-1a:2003", "PDF/X-3:2003", "PDF/X-4", "PDF/X-4:2008"],
                         index=0,
                         help="PDF/X-1a:2001 (PDF 1.3) wordt door de meeste "
                              "drukkerij-checks het breedst herkend - veilige keuze "
                              "als je het niet zeker weet. PDF/X-4 (PDF 1.6) is de "
                              "modernste variant en wordt door sommige drukkers "
-                             "(bv. FlyerAlarm) juist als voorkeur gevraagd, met "
-                             "PDF/X-3 als hun fallback."
+                             "(bv. FlyerAlarm, Drukwerkdeal) juist als voorkeur "
+                             "gevraagd, met PDF/X-3 als fallback."
                     )
                     pdf_version = {
                         "PDF/X-1a:2001": "1.3",
                         "PDF/X-1a:2003": "1.4",
                         "PDF/X-3:2003": "1.4",
                         "PDF/X-4": "1.6",
+                        "PDF/X-4:2008": "1.6",
                     }[gts_label]
                     st.caption(
                         "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
