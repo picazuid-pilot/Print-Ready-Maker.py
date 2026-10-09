@@ -77,27 +77,27 @@ FORMATS = {
 COLOR_PROFILES = {
     "CoatedFOGRA39": {
         "desc": "ISO 12647-2, gestreken papier - EU-standaard (klassiek, t/m ~2015)",
-        "tac": 300, "gcr": 0.75,
+        "tac": 300, "gcr": 0.75, "registry_id": "FOGRA39",
     },
     "CoatedFOGRA51": {
         "desc": "ISO 12647-2:2013, gestreken papier - huidige EU-standaard",
-        "tac": 300, "gcr": 0.80,
+        "tac": 300, "gcr": 0.80, "registry_id": "FOGRA51",
     },
     "CoatedFOGRA52": {
         "desc": "ISO 12647-2:2013 variant, gestreken papier (iets lichter papiertype)",
-        "tac": 300, "gcr": 0.80,
+        "tac": 300, "gcr": 0.80, "registry_id": "FOGRA52",
     },
     "UncoatedFOGRA29": {
         "desc": "ISO 12647-2, ongestreken papier - EU-standaard (klassiek, t/m ~2015)",
-        "tac": 260, "gcr": 0.60,
+        "tac": 260, "gcr": 0.60, "registry_id": "FOGRA29",
     },
     "UncoatedFOGRA47": {
         "desc": "ISO 12647-2:2013, ongestreken papier - huidige EU-standaard",
-        "tac": 240, "gcr": 0.60,
+        "tac": 240, "gcr": 0.60, "registry_id": "FOGRA47",
     },
     "PSOLWCimprovedFOGRA45": {
         "desc": "Krantenpapier / LWC (bv. tijdschriften, dunne papiersoorten)",
-        "tac": 260, "gcr": 0.55,
+        "tac": 260, "gcr": 0.55, "registry_id": "FOGRA45",
     },
     "USWebCoatedSWOP": {
         "desc": "US Web Coated SWOP v2 - VS-standaard voor gestreken offsetdruk",
@@ -324,14 +324,27 @@ def cmyk_array_to_jpeg_bytes(cmyk_u8, quality=92):
 
 
 def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condition,
-                     pdf_version="1.4", gts_label="PDF/X-1a:2003"):
+                     pdf_version="1.4", gts_label="PDF/X-1a:2003", registry_id=None):
     """Post-processeert een reportlab-PDF met pikepdf tot een structureel
-    geldige PDF/X-1a: voegt OutputIntent (met ingesloten CMYK ICC-profiel),
-    TrimBox en BleedBox toe. Vereist dat alle content al CMYK is (geen RGB/
-    transparantie) - dat garandeert export_to_cmyk_pdf() door alleen CMYK-
-    fills en een CMYK-JPEG te gebruiken.
+    geldige PDF/X-1a: voegt OutputIntent, TrimBox en BleedBox toe. Vereist
+    dat alle content al CMYK is (geen RGB/transparantie) - dat garandeert
+    export_to_cmyk_pdf() door alleen CMYK-fills en een CMYK-JPEG te
+    gebruiken.
     pdf_version/gts_label kiezen tussen de klassieke PDF/X-1a:2001 (PDF 1.3,
-    het breedst herkend door drukkerij-checks) en PDF/X-1a:2003 (PDF 1.4)."""
+    het breedst herkend door drukkerij-checks) en PDF/X-1a:2003 (PDF 1.4).
+
+    registry_id: als gezet (bv. "FOGRA39"), wordt het OutputIntent net als
+    in Bizay's eigen aanleverinstructies (Illustrator: "Convert to
+    Destination" + "Coated FOGRA39", Profile Inclusion Policy: "Don't
+    Include Profiles") opgebouwd als een verwijzing naar de geregistreerde
+    ICC-karakteriseringsnaam (/OutputConditionIdentifier + /RegistryName
+    naar color.org), ZONDER een profiel in te sluiten. Dat is zowel
+    correcter (we claimen dan niet een écht FOGRA-profiel te zijn terwijl
+    we een generiek vervangend profiel insluiten) als wat drukkerij-
+    preflight-checks zoals die van Bizay daadwerkelijk verwachten. Zonder
+    registry_id (bv. profielen waarvoor geen vaste registry-naam bekend is)
+    valt dit terug op het insluiten van het eigen generieke CMYK ICC-
+    profiel met /OutputConditionIdentifier "Custom"."""
     pdf = pikepdf.Pdf.open(io.BytesIO(base_pdf_bytes))
     page = pdf.pages[0]
 
@@ -342,7 +355,17 @@ def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condit
     page.TrimBox = trim
     page.BleedBox = media
 
-    if os.path.exists(ICC_PROFILE_PATH):
+    if registry_id:
+        output_intent = pdf.make_indirect(pikepdf.Dictionary({
+            "/Type": pikepdf.Name("/OutputIntent"),
+            "/S": pikepdf.Name("/GTS_PDFX"),
+            "/OutputConditionIdentifier": pikepdf.String(registry_id),
+            "/OutputCondition": pikepdf.String(output_condition),
+            "/Info": pikepdf.String(output_condition),
+            "/RegistryName": pikepdf.String("http://www.color.org"),
+        }))
+        pdf.Root.OutputIntents = pdf.make_indirect(pikepdf.Array([output_intent]))
+    elif os.path.exists(ICC_PROFILE_PATH):
         with open(ICC_PROFILE_PATH, "rb") as f:
             icc_bytes = f.read()
         icc_stream = pdf.make_stream(icc_bytes)
@@ -352,7 +375,7 @@ def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condit
         output_intent = pdf.make_indirect(pikepdf.Dictionary({
             "/Type": pikepdf.Name("/OutputIntent"),
             "/S": pikepdf.Name("/GTS_PDFX"),
-            "/OutputConditionIdentifier": pikepdf.String(output_condition),
+            "/OutputConditionIdentifier": pikepdf.String("Custom"),
             "/OutputCondition": pikepdf.String(output_condition),
             "/Info": pikepdf.String(output_condition),
             "/DestOutputProfile": icc_stream,
@@ -690,7 +713,8 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
 
     if pdfx1a and PIKEPDF_SUPPORT:
         return finalize_pdfx1a(base_pdf, width_pt, height_pt, bleed_pt, profile_key,
-                                pdf_version=pdf_version, gts_label=gts_label)
+                                pdf_version=pdf_version, gts_label=gts_label,
+                                registry_id=profile.get("registry_id"))
 
     if PIKEPDF_SUPPORT:
         # Ook zonder strikte PDF/X-1a: TrimBox/BleedBox zijn altijd nuttig
@@ -886,15 +910,27 @@ with st.sidebar:
                         "PDF/X-4": "1.6",
                         "PDF/X-4:2008": "1.6",
                     }[gts_label]
-                    st.caption(
-                        "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
-                        "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
-                        "gelicentieerd Fogra/SWOP-profiel - de inktomzetting is "
-                        "getuned op het gekozen profiel, maar niet pixel-exact "
-                        "gecertificeerd. Dubbelcheck bij je drukker of dit voldoet; "
-                        "voor 100% garantie kan de drukker zelf met het officiële "
-                        "profiel converteren in Acrobat Pro."
-                    )
+                    if COLOR_PROFILES[color_profile].get("registry_id"):
+                        st.caption(
+                            f"ℹ️ Het OutputIntent verwijst naar de geregistreerde "
+                            f"ICC-karakteriseringsnaam **{COLOR_PROFILES[color_profile]['registry_id']}** "
+                            f"(zoals color.org/Adobe die kent), zonder zelf een "
+                            f"profiel in te sluiten - dit is dezelfde methode die "
+                            f"bv. Bizay's eigen aanlever-instructies voor Illustrator "
+                            f"voorschrijven ('Convert to Destination' + 'Don't Include "
+                            f"Profiles'). De pixels zijn wel al omgezet, getuned op dit "
+                            f"profiel (inktlimiet + zwartopbouw)."
+                        )
+                    else:
+                        st.caption(
+                            "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
+                            "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
+                            "gelicentieerd profiel - de inktomzetting is getuned op het "
+                            "gekozen profiel, maar niet pixel-exact gecertificeerd. "
+                            "Dubbelcheck bij je drukker of dit voldoet; voor 100% "
+                            "garantie kan de drukker zelf met het officiële profiel "
+                            "converteren in Acrobat Pro."
+                        )
                 else:
                     pdf_version = st.selectbox(
                         "PDF-versie:", ["1.3", "1.4", "1.5", "1.6", "1.7"], index=1,
