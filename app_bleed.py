@@ -386,6 +386,28 @@ def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condit
     pdf.docinfo["/GTS_PDFXConformance"] = gts_label
     pdf.docinfo["/Trapped"] = pikepdf.Name("/False")
 
+    # Naast de klassieke docinfo-sleutels (het enige dat de oorspronkelijke
+    # ISO 15930-1 PDF/X-1a-spec uit 2001 vereist) ook XMP-metadata met
+    # dezelfde PDF/X-velden toevoegen. Een PDF gemaakt met reportlab+pikepdf
+    # heeft normaal helemaal geen XMP-pakket, terwijl Adobe-programma's
+    # (Illustrator/Acrobat - zie de PDF/X-1a-export in Bizay's eigen
+    # aanlevergids) dat altijd meeschrijven. Sommige (moderne, bv. callas
+    # pdfToolbox-achtige) drukkerij-preflightchecks lezen specifiek deze
+    # XMP-velden om PDF/X te herkennen i.p.v. (alleen) de docinfo-sleutels -
+    # zonder XMP kan zo'n check het bestand dus mogelijk niet als PDF/X-1a
+    # herkennen, ook al is het structureel wel degelijk geldige PDF/X-1a.
+    try:
+        with pdf.open_metadata(set_pikepdf_as_editor=False) as meta:
+            meta["pdfxid:GTS_PDFXVersion"] = gts_label
+            meta["pdfxid:GTS_PDFXConformance"] = gts_label
+            meta["pdf:Trapped"] = "False"
+            meta["dc:format"] = "application/pdf"
+    except Exception:
+        # Metadata is een bonus bovenop de (al geldige) docinfo-sleutels -
+        # als dit om wat voor reden dan ook faalt, blijft de rest van het
+        # bestand gewoon geldig.
+        pass
+
     out = io.BytesIO()
     pdf.save(out, min_version=pdf_version)
     return out.getvalue()
