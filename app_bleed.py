@@ -77,7 +77,7 @@ FORMATS = {
 COLOR_PROFILES = {
     "CoatedFOGRA39": {
         "desc": "ISO 12647-2, gestreken papier - EU-standaard (klassiek, t/m ~2015)",
-        "tac": 330, "gcr": 0.75,
+        "tac": 300, "gcr": 0.75,
     },
     "CoatedFOGRA51": {
         "desc": "ISO 12647-2:2013, gestreken papier - huidige EU-standaard",
@@ -127,38 +127,128 @@ COLOR_PROFILES = {
 
 # Drukker-presets: vertaalt "bij welke drukker lever je dit aan" naar de
 # juiste technische instellingen, zodat een leek niet zelf hoeft te weten
-# wat Fogra39 of PDF/X-1a betekent. Dit zijn instellingen die gebruikers
-# hebben gemeld als werkend bij deze drukkers op het moment van schrijven -
-# drukkers wijzigen hun eisen weleens, dus bij twijfel altijd even de
-# upload-pagina van de drukker zelf checken.
+# wat Fogra39 of PDF/X-1a betekent.
+#
+# "confirmed" is eerlijk bedoeld: True betekent dat de waarden hieronder
+# met een citaat van de eigen site van die drukker onderbouwd zijn (zie
+# "source" per preset). False betekent dat ik dat ondanks zoeken niet kon
+# bevestigen (dichtgetimmerde/JS-pagina's, geen publieke specificatie, etc.)
+# - die presets vallen terug op dezelfde veilige, brede instellingen als
+# "Weet ik niet" en moeten als vertrekpunt gezien worden, niet als garantie.
+# Drukkers wijzigen hun eisen bovendien weleens, dus bij een strikte
+# controle (zoals bij Bizay) altijd even de foutmelding/aanleverpagina van
+# de drukker zelf checken.
 PRINTER_PRESETS = {
     "Weet ik niet / algemeen (veilige standaard)": {
         "profile": "CoatedFOGRA39",
         "pdfx1a": False,
         "pdf_version": "1.4",
         "gts_label": "PDF/X-1a:2003",
+        "confirmed": True,
         "explain": "Gewone CMYK-PDF zonder strikte PDF/X-eisen. Werkt bij de "
                    "meeste drukkers die geen expliciet bestandstype vermelden.",
+        "source": None,
     },
     "Bizay - gevouwen folders (PDF/X-1a)": {
         "profile": "CoatedFOGRA39",
         "pdfx1a": True,
         "pdf_version": "1.3",
         "gts_label": "PDF/X-1a:2001",
+        "confirmed": True,
         "explain": "Bizay vraagt voor gevouwen folders expliciet PDF/X-1a. "
                    "Dit gebruikt de klassieke PDF/X-1a:2001-variant (PDF 1.3) "
                    "omdat die het breedst herkend wordt door drukkerij-checks.",
+        "source": "Gemeld door gebruiker (eigen ervaring met afkeuring).",
     },
     "Onlineprinters.nl (PDF 1.5 + Fogra CMYK)": {
         "profile": "CoatedFOGRA51",
         "pdfx1a": False,
         "pdf_version": "1.5",
         "gts_label": "PDF/X-1a:2003",
+        "confirmed": True,
         "explain": "Onlineprinters.nl vraagt PDF 1.5 met een Fogra CMYK-"
                    "variant. Standaard Fogra51 (huidige EU-standaard) - "
                    "controleer op hun site of ze specifiek Fogra39 willen "
                    "(oudere papiersoort/opdracht), pas dan aan bij "
                    "'Geavanceerd'.",
+        "source": "Gemeld door gebruiker.",
+    },
+    "Flyerzone.nl": {
+        "profile": "GenericCMYK",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "tac_override": 280,
+        "confirmed": True,
+        "explain": "Flyerzone vraagt CMYK (geen vast FOGRA-profiel genoemd op "
+                   "hun site) met max. 280% inktdekking voor offsetdruk "
+                   "(300% voor digitaal), 3mm afloop, min. 300 dpi.",
+        "source": "flyerzone.nl/klantenservice/aanleverspecificaties (geraadpleegd 2026-10-09).",
+    },
+    "Helloprint": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "tac_override": 300,
+        "confirmed": True,
+        "explain": "Helloprint vraagt PDF 1.4 of hoger, kleurprofiel FOGRA39 "
+                   "(ISO Coated v2), CMYK (geen RGB), max. 300% inktdekking. "
+                   "Geen PDF/X vereist.",
+        "source": "Productpagina 'Quick Artwork Guide - Folded' (geraadpleegd 2026-10-09).",
+    },
+    "Drukwerkdeal.nl": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "confirmed": False,
+        "explain": "Kon de exacte PDF-/kleurprofieleisen niet van hun site "
+                   "bevestigen (specificaties staan achter een niet-"
+                   "doorzoekbare pagina). Valt terug op veilige standaard-"
+                   "instellingen - check zelf hun 'Aanleveren'-pagina of "
+                   "klantenservice voor zekerheid.",
+        "source": None,
+    },
+    "FlyerAlarm": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "confirmed": False,
+        "explain": "Kon de exacte PDF-/kleurprofieleisen niet van hun site "
+                   "bevestigen (JavaScript-site, niet uit te lezen). Valt "
+                   "terug op veilige standaardinstellingen - check zelf hun "
+                   "aanleverspecificaties/Datenblatt voor zekerheid.",
+        "source": None,
+    },
+    "Vistaprint.nl": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "confirmed": False,
+        "explain": "Kon de exacte PDF-/kleurprofieleisen niet van hun site "
+                   "bevestigen - Vistaprint laat klanten meestal in hun eigen "
+                   "online ontwerptool werken i.p.v. een eigen PDF uploaden, "
+                   "dus publieke bestandseisen zijn schaars. Valt terug op "
+                   "veilige standaardinstellingen - check bij twijfel hun "
+                   "klantenservice.",
+        "source": None,
+    },
+    "Groenprint.nl": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "confirmed": False,
+        "explain": "Groenprint biedt een eigen downloadbare kleurprofiel-/"
+                   "PDF-instellingenset ('Printvisie') aan, maar noemt geen "
+                   "specifiek FOGRA-profiel of exacte inktlimiet op de "
+                   "publieke pagina. Valt terug op veilige standaard-"
+                   "instellingen - gebruik bij voorkeur hun eigen "
+                   "Printvisie-instellingen als je die hebt.",
+        "source": None,
     },
     "Geavanceerd: zelf instellen": None,
 }
@@ -546,7 +636,8 @@ def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, blee
 
 
 def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
-                        pdf_version="1.4", gts_label="PDF/X-1a:2003"):
+                        pdf_version="1.4", gts_label="PDF/X-1a:2003",
+                        tac_override=None, gcr_override=None):
     """
     ECHTE CMYK-EXPORT: zet de pixels daadwerkelijk om naar CMYK (getuned op
     het gekozen drukprofiel via total-area-coverage-limiet en GCR), bouwt
@@ -556,9 +647,15 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
     wat drukkers voor bv. gevouwde folders vaak verplicht stellen.
     pdf_version bepaalt de gedeclareerde PDF-versie (bv. "1.3" voor de
     klassieke PDF/X-1a:2001, "1.5" als een drukker dat letterlijk vraagt).
+    tac_override/gcr_override laten een drukker-preset de inktlimiet/
+    zwartopbouw van het gekozen profiel overschrijven zonder een apart
+    COLOR_PROFILES-item aan te maken (bv. Flyerzone's 280% max i.p.v. de
+    standaard 300% van een generiek profiel).
     """
     profile = COLOR_PROFILES.get(profile_key, COLOR_PROFILES["GenericCMYK"])
-    cmyk_arr = rgb_image_to_cmyk_array(image, tac_limit=profile["tac"], gcr=profile["gcr"])
+    tac = tac_override if tac_override is not None else profile["tac"]
+    gcr = gcr_override if gcr_override is not None else profile["gcr"]
+    cmyk_arr = rgb_image_to_cmyk_array(image, tac_limit=tac, gcr=gcr)
     jpeg_bytes = cmyk_array_to_jpeg_bytes(cmyk_arr, quality=92)
 
     width_pt = (image.width / 300.0) * 72.0
@@ -678,6 +775,8 @@ with st.sidebar:
     pdfx1a_enabled = False
     pdf_version = "1.4"
     gts_label = "PDF/X-1a:2003"
+    tac_override = None
+    gcr_override = None
 
     if convert_to_cmyk:
         preset_keys = list(PRINTER_PRESETS.keys())
@@ -697,9 +796,23 @@ with st.sidebar:
             pdfx1a_enabled = preset["pdfx1a"]
             pdf_version = preset["pdf_version"]
             gts_label = preset["gts_label"]
-            st.caption(f"ℹ️ {preset['explain']}")
+            tac_override = preset.get("tac_override")
+            gcr_override = preset.get("gcr_override")
+
+            if preset.get("confirmed"):
+                st.caption(f"✅ {preset['explain']}")
+                if preset.get("source"):
+                    st.caption(f"Bron: {preset['source']}")
+            else:
+                st.warning(
+                    f"⚠️ {preset['explain']}",
+                    icon="⚠️"
+                )
+
             with st.expander("Technische details van deze preset"):
                 st.write(f"- Drukprofiel: **{color_profile}** ({COLOR_PROFILES[color_profile]['desc']})")
+                if tac_override is not None:
+                    st.write(f"- Max. inktdekking (afwijkend van standaardprofiel): **{tac_override}%**")
                 st.write(f"- PDF-versie: **{pdf_version}**")
                 st.write(f"- PDF/X-1a: **{'Ja - ' + gts_label if pdfx1a_enabled else 'Nee'}**")
                 st.caption(
@@ -850,7 +963,8 @@ if uploaded_file is not None:
             if convert_to_cmyk and real_cmyk_conversion:
                 pdf_data = export_to_cmyk_pdf(
                     final_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled,
-                    pdf_version=pdf_version, gts_label=gts_label
+                    pdf_version=pdf_version, gts_label=gts_label,
+                    tac_override=tac_override, gcr_override=gcr_override
                 )
             else:
                 pdf_data = export_to_pdf_perfect(
