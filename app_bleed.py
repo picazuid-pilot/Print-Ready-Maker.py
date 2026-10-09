@@ -700,6 +700,58 @@ def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, blee
     return buffer.getvalue()
 
 
+def merge_page_pdfs(page_pdf_bytes_list, pdf_version="1.4"):
+    """Voegt losse 1-pagina PDF's (elk gemaakt door export_to_cmyk_pdf/
+    export_to_pdf_perfect voor één pagina van een meerpagina-upload) samen
+    tot één PDF. Een geüploade PDF met bv. voor- én achterkant van een
+    folder bestaat uit meerdere pagina's - zonder deze samenvoeging zou
+    alleen de eerste pagina in het eindbestand belanden.
+    Zet de OutputIntent (PDF/X-kleurprofiel), de GTS_PDFX-docinfo-sleutels
+    en de XMP-metadata van de eerste pagina door naar het samengevoegde
+    bestand, zodat PDF/X-eigenschappen (indien van toepassing) voor het
+    hele document gelden - dat is wat PDF/X vereist (één document-brede
+    OutputIntent, niet per pagina)."""
+    if len(page_pdf_bytes_list) == 1:
+        return page_pdf_bytes_list[0]
+    if not PIKEPDF_SUPPORT:
+        # Geen pikepdf beschikbaar om samen te voegen - beter de eerste
+        # pagina teruggeven dan crashen op een ontbrekende functie.
+        return page_pdf_bytes_list[0]
+
+    out_pdf = pikepdf.Pdf.new()
+    src_pdfs = []  # referenties levend houden tot na save()
+    first_src = None
+    for pb in page_pdf_bytes_list:
+        src_pdf = pikepdf.Pdf.open(io.BytesIO(pb))
+        src_pdfs.append(src_pdf)
+        if first_src is None:
+            first_src = src_pdf
+        out_pdf.pages.extend(src_pdf.pages)
+        if "/OutputIntents" not in out_pdf.Root and "/OutputIntents" in src_pdf.Root:
+            out_pdf.Root.OutputIntents = out_pdf.copy_foreign(src_pdf.Root.OutputIntents)
+
+    for key in ("/GTS_PDFXVersion", "/GTS_PDFXConformance", "/Trapped"):
+        if key in first_src.docinfo:
+            # str(...) i.p.v. de pikepdf-waarde direct overnemen: die is
+            # gebonden aan first_src en pikepdf staat niet toe om een
+            # object uit een ander Pdf-document zomaar over te nemen
+            # zonder copy_foreign - een losse Python-string laat pikepdf
+            # gewoon een nieuwe waarde aanmaken in het doeldocument.
+            out_pdf.docinfo[key] = str(first_src.docinfo[key])
+
+    try:
+        with first_src.open_metadata(set_pikepdf_as_editor=False) as src_meta:
+            with out_pdf.open_metadata(set_pikepdf_as_editor=False) as dst_meta:
+                for k, v in src_meta.items():
+                    dst_meta[k] = v
+    except Exception:
+        pass
+
+    out = io.BytesIO()
+    out_pdf.save(out, min_version=pdf_version)
+    return out.getvalue()
+
+
 def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
                         pdf_version="1.4", gts_label="PDF/X-1a:2003",
                         tac_override=None, gcr_override=None):
@@ -1010,29 +1062,39 @@ if uploaded_file is not None:
                 if not PDF_IMPORT:
                     st.error("Installeer pdf2image: pip install pdf2image")
                     st.stop()
-                
-                images = convert_from_bytes(file_bytes, first_page=1, last_page=1, dpi=300)
+
+                # Alle pagina's inladen (niet alleen de eerste) - een
+                # geüploade folder-PDF heeft meestal minimaal een voor- en
+                # achterkant als losse pagina's, en die moeten allebei in
+                # het eindbestand belanden.
+                images = convert_from_bytes(file_bytes, dpi=300)
                 if images:
-                    original_img = images[0]
                     if crop_marks_remove:
-                        original_img = remove_crop_marks(original_img, crop_pixels)
+                        images = [remove_crop_marks(img, crop_pixels) for img in images]
                         st.success(f"✓ Snijtekens verwijderd")
+                    all_original_imgs = [img.convert('RGB') if img.mode != 'RGB' else img for img in images]
+                    original_img = all_original_imgs[0]
+                    if len(all_original_imgs) > 1:
+                        st.info(f"📑 {len(all_original_imgs)} pagina's gevonden in de PDF - allemaal worden verwerkt en samengevoegd tot één bestand.")
                 else:
                     st.error("Kan PDF niet laden")
                     st.stop()
             else:
                 original_img = Image.open(io.BytesIO(file_bytes))
-            
-            if original_img.mode != 'RGB':
-                original_img = original_img.convert('RGB')
-        
-        # Aspect ratio check
+                if original_img.mode != 'RGB':
+                    original_img = original_img.convert('RGB')
+                all_original_imgs = [original_img]
+
+        # Aspect ratio check (per pagina, want bij een meerpagina-PDF kan
+        # de ene pagina wel en de andere net niet passen)
         st.markdown("### 📏 2. Formaat check")
-        aspect_msg = check_aspect_ratio(original_img, (width_mm, height_mm))
-        if "⚠️" in aspect_msg:
-            st.warning(aspect_msg)
-        else:
-            st.success(aspect_msg)
+        for p_idx, p_img in enumerate(all_original_imgs):
+            aspect_msg = check_aspect_ratio(p_img, (width_mm, height_mm))
+            label = f"Pagina {p_idx + 1}: " if len(all_original_imgs) > 1 else ""
+            if "⚠️" in aspect_msg:
+                st.warning(label + aspect_msg)
+            else:
+                st.success(label + aspect_msg)
         
         # Preview
         col1, col2 = st.columns(2)
@@ -1079,26 +1141,28 @@ if uploaded_file is not None:
                     "hex-kleurkiezer in de zijbalk."
                 )
 
-        # Verwerk bleed
-        with st.spinner("🔧 Bleed toevoegen (pixel-perfect met vervaging)..."):
-            # Resize naar exact output formaat
+        # Verwerk bleed - voor elke pagina apart (zelfde instellingen)
+        with st.spinner(f"🔧 Bleed toevoegen aan {len(all_original_imgs)} pagina('s) (pixel-perfect met vervaging)..."):
             target_width = int(width_mm / 25.4 * 300)
             target_height = int(height_mm / 25.4 * 300)
-            resized_img = original_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
-            
-            # Bleed pixels
             bleed_pixels = int(bleed_mm / 25.4 * 300)
-            
-            # Creëer pixel-perfect bleed
-            final_img = create_pixel_perfect_bleed(
-                resized_img, bleed_pixels, fill_method, chosen_rgb, blur_pixels
-            )
-        
+
+            final_imgs = []
+            for p_img in all_original_imgs:
+                resized_img = p_img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                final_imgs.append(create_pixel_perfect_bleed(
+                    resized_img, bleed_pixels, fill_method, chosen_rgb, blur_pixels
+                ))
+            final_img = final_imgs[0]
+
         with col2:
             st.markdown('<p class="report-title">✨ Met Bleed</p>', unsafe_allow_html=True)
             st.image(final_img, use_container_width=True)
-            st.success(f"✅ +{bleed_mm}mm bleed | Vervaging: {blur_pixels}px")
-        
+            if len(final_imgs) > 1:
+                st.success(f"✅ +{bleed_mm}mm bleed | Vervaging: {blur_pixels}px | Pagina 1 van {len(final_imgs)} getoond - alle pagina's krijgen dezelfde bewerking")
+            else:
+                st.success(f"✅ +{bleed_mm}mm bleed | Vervaging: {blur_pixels}px")
+
         # Export
         st.markdown("### 💾 3. Exporteer")
 
@@ -1106,23 +1170,27 @@ if uploaded_file is not None:
         cmyk_suffix = "_CMYK" if convert_to_cmyk else ""
         pdfx_suffix = "_PDFX1a" if pdfx1a_enabled else ""
 
-        spinner_label = "📑 PDF genereren"
+        spinner_label = f"📑 PDF genereren ({len(final_imgs)} pagina('s))"
         if real_cmyk_conversion:
             spinner_label += " (echte CMYK-omzetting" + (" + PDF/X-1a" if pdfx1a_enabled else "") + ")..."
         else:
             spinner_label += " (haarlijnvrij)..."
 
         with st.spinner(spinner_label):
-            if convert_to_cmyk and real_cmyk_conversion:
-                pdf_data = export_to_cmyk_pdf(
-                    final_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled,
-                    pdf_version=pdf_version, gts_label=gts_label,
-                    tac_override=tac_override, gcr_override=gcr_override
-                )
-            else:
-                pdf_data = export_to_pdf_perfect(
-                    final_img, convert_to_cmyk, color_profile, output_format, bleed_mm
-                )
+            page_pdf_bytes = []
+            for f_img in final_imgs:
+                if convert_to_cmyk and real_cmyk_conversion:
+                    page_pdf_bytes.append(export_to_cmyk_pdf(
+                        f_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled,
+                        pdf_version=pdf_version, gts_label=gts_label,
+                        tac_override=tac_override, gcr_override=gcr_override
+                    ))
+                else:
+                    page_pdf_bytes.append(export_to_pdf_perfect(
+                        f_img, convert_to_cmyk, color_profile, output_format, bleed_mm
+                    ))
+
+            pdf_data = merge_page_pdfs(page_pdf_bytes, pdf_version=pdf_version)
 
             st.download_button(
                 label=f"📥 Download {output_format} PDF {cmyk_suffix}{pdfx_suffix}",
