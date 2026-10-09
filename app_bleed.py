@@ -125,6 +125,44 @@ COLOR_PROFILES = {
     },
 }
 
+# Drukker-presets: vertaalt "bij welke drukker lever je dit aan" naar de
+# juiste technische instellingen, zodat een leek niet zelf hoeft te weten
+# wat Fogra39 of PDF/X-1a betekent. Dit zijn instellingen die gebruikers
+# hebben gemeld als werkend bij deze drukkers op het moment van schrijven -
+# drukkers wijzigen hun eisen weleens, dus bij twijfel altijd even de
+# upload-pagina van de drukker zelf checken.
+PRINTER_PRESETS = {
+    "Weet ik niet / algemeen (veilige standaard)": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": False,
+        "pdf_version": "1.4",
+        "gts_label": "PDF/X-1a:2003",
+        "explain": "Gewone CMYK-PDF zonder strikte PDF/X-eisen. Werkt bij de "
+                   "meeste drukkers die geen expliciet bestandstype vermelden.",
+    },
+    "Bizay - gevouwen folders (PDF/X-1a)": {
+        "profile": "CoatedFOGRA39",
+        "pdfx1a": True,
+        "pdf_version": "1.3",
+        "gts_label": "PDF/X-1a:2001",
+        "explain": "Bizay vraagt voor gevouwen folders expliciet PDF/X-1a. "
+                   "Dit gebruikt de klassieke PDF/X-1a:2001-variant (PDF 1.3) "
+                   "omdat die het breedst herkend wordt door drukkerij-checks.",
+    },
+    "Onlineprinters.nl (PDF 1.5 + Fogra CMYK)": {
+        "profile": "CoatedFOGRA51",
+        "pdfx1a": False,
+        "pdf_version": "1.5",
+        "gts_label": "PDF/X-1a:2003",
+        "explain": "Onlineprinters.nl vraagt PDF 1.5 met een Fogra CMYK-"
+                   "variant. Standaard Fogra51 (huidige EU-standaard) - "
+                   "controleer op hun site of ze specifiek Fogra39 willen "
+                   "(oudere papiersoort/opdracht), pas dan aan bij "
+                   "'Geavanceerd'.",
+    },
+    "Geavanceerd: zelf instellen": None,
+}
+
 def rgb_to_cmyk(r, g, b):
     """RGB naar CMYK (0-100%) - gebruikt voor de losse kleur-preview in de sidebar."""
     if r == 0 and g == 0 and b == 0:
@@ -193,12 +231,15 @@ def cmyk_array_to_jpeg_bytes(cmyk_u8, quality=92):
     return buf.getvalue()
 
 
-def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condition):
+def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condition,
+                     pdf_version="1.4", gts_label="PDF/X-1a:2003"):
     """Post-processeert een reportlab-PDF met pikepdf tot een structureel
-    geldige PDF/X-1a:2003: voegt OutputIntent (met ingesloten CMYK ICC-profiel),
+    geldige PDF/X-1a: voegt OutputIntent (met ingesloten CMYK ICC-profiel),
     TrimBox en BleedBox toe. Vereist dat alle content al CMYK is (geen RGB/
-    transparantie) - dat garandeert build_cmyk_pdf() door alleen CMYK-fills en
-    een CMYK-JPEG te gebruiken."""
+    transparantie) - dat garandeert export_to_cmyk_pdf() door alleen CMYK-
+    fills en een CMYK-JPEG te gebruiken.
+    pdf_version/gts_label kiezen tussen de klassieke PDF/X-1a:2001 (PDF 1.3,
+    het breedst herkend door drukkerij-checks) en PDF/X-1a:2003 (PDF 1.4)."""
     pdf = pikepdf.Pdf.open(io.BytesIO(base_pdf_bytes))
     page = pdf.pages[0]
 
@@ -226,11 +267,12 @@ def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condit
         }))
         pdf.Root.OutputIntents = pdf.make_indirect(pikepdf.Array([output_intent]))
 
-    pdf.docinfo["/GTS_PDFXVersion"] = "PDF/X-1a:2003"
+    pdf.docinfo["/GTS_PDFXVersion"] = gts_label
+    pdf.docinfo["/GTS_PDFXConformance"] = gts_label
     pdf.docinfo["/Trapped"] = pikepdf.Name("/False")
 
     out = io.BytesIO()
-    pdf.save(out, min_version="1.4")
+    pdf.save(out, min_version=pdf_version)
     return out.getvalue()
 
 def get_dominant_color(image):
@@ -503,14 +545,17 @@ def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, blee
     return buffer.getvalue()
 
 
-def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False):
+def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
+                        pdf_version="1.4", gts_label="PDF/X-1a:2003"):
     """
     ECHTE CMYK-EXPORT: zet de pixels daadwerkelijk om naar CMYK (getuned op
     het gekozen drukprofiel via total-area-coverage-limiet en GCR), bouwt
     een CMYK-JPEG en plaatst die in de PDF met alleen CMYK-fills (geen RGB).
     Als pdfx1a=True wordt de PDF daarna met pikepdf omgezet naar een
-    structureel geldige PDF/X-1a:2003 (OutputIntent + TrimBox/BleedBox) -
-    dit is wat drukkers voor bv. gevouwde folders vaak verplicht stellen.
+    structureel geldige PDF/X-1a (OutputIntent + TrimBox/BleedBox) - dit is
+    wat drukkers voor bv. gevouwde folders vaak verplicht stellen.
+    pdf_version bepaalt de gedeclareerde PDF-versie (bv. "1.3" voor de
+    klassieke PDF/X-1a:2001, "1.5" als een drukker dat letterlijk vraagt).
     """
     profile = COLOR_PROFILES.get(profile_key, COLOR_PROFILES["GenericCMYK"])
     cmyk_arr = rgb_image_to_cmyk_array(image, tac_limit=profile["tac"], gcr=profile["gcr"])
@@ -545,7 +590,8 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False):
     base_pdf = buffer.getvalue()
 
     if pdfx1a and PIKEPDF_SUPPORT:
-        return finalize_pdfx1a(base_pdf, width_pt, height_pt, bleed_pt, profile_key)
+        return finalize_pdfx1a(base_pdf, width_pt, height_pt, bleed_pt, profile_key,
+                                pdf_version=pdf_version, gts_label=gts_label)
 
     if PIKEPDF_SUPPORT:
         # Ook zonder strikte PDF/X-1a: TrimBox/BleedBox zijn altijd nuttig
@@ -556,7 +602,7 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False):
         page.TrimBox = [bleed_pt, bleed_pt, width_pt - bleed_pt, height_pt - bleed_pt]
         page.BleedBox = [0, 0, width_pt, height_pt]
         out = io.BytesIO()
-        pdf.save(out)
+        pdf.save(out, min_version=pdf_version)
         return out.getvalue()
 
     return base_pdf
@@ -624,46 +670,92 @@ with st.sidebar:
     
     st.divider()
     
-    # CMYK instellingen
-    st.subheader("🖨️ CMYK")
+    # CMYK / drukker instellingen
+    st.subheader("🖨️ Voor welke drukker?")
     convert_to_cmyk = st.checkbox("Omzetten naar CMYK", value=True)
     color_profile = "GenericCMYK"
     real_cmyk_conversion = False
     pdfx1a_enabled = False
+    pdf_version = "1.4"
+    gts_label = "PDF/X-1a:2003"
+
     if convert_to_cmyk:
-        profile_keys = list(COLOR_PROFILES.keys())
-        color_profile = st.selectbox("Drukprofiel:", profile_keys, index=0)
-        st.caption(COLOR_PROFILES[color_profile]["desc"])
-
-        real_cmyk_conversion = st.checkbox(
-            "Echte CMYK-pixelomzetting (aanbevolen)",
-            value=True,
-            help="Zet de afbeelding echt om naar CMYK-inktwaarden, getuned op "
-                 "het gekozen profiel (inktlimiet + zwartopbouw). Staat dit uit, "
-                 "dan blijft het beeld RGB en wordt CMYK alleen als label in de "
-                 "PDF-metadata gezet (oud gedrag, niet aan te raden voor drukwerk)."
+        preset_keys = list(PRINTER_PRESETS.keys())
+        preset_choice = st.selectbox(
+            "Kies je drukker (of 'Geavanceerd' om alles zelf te kiezen):",
+            preset_keys, index=0,
+            help="Elke drukker heeft net iets andere eisen (PDF-versie, "
+                 "wel/niet PDF/X-1a, welk CMYK-profiel). Kies hier je drukker "
+                 "en de juiste instellingen worden automatisch gezet."
         )
+        preset = PRINTER_PRESETS[preset_choice]
 
-        if real_cmyk_conversion and PIKEPDF_SUPPORT:
-            pdfx1a_enabled = st.checkbox(
-                "Exporteer als PDF/X-1a",
-                value=False,
-                help="Veel drukkers eisen PDF/X-1a, bijvoorbeeld voor gevouwde "
-                     "folders. Voegt een CMYK-OutputIntent en de verplichte "
-                     "TrimBox/BleedBox toe aan het PDF-bestand."
-            )
-            if pdfx1a_enabled:
+        if preset is not None:
+            # --- Eenvoudige modus: alles automatisch, niets technisch te kiezen ---
+            color_profile = preset["profile"]
+            real_cmyk_conversion = True
+            pdfx1a_enabled = preset["pdfx1a"]
+            pdf_version = preset["pdf_version"]
+            gts_label = preset["gts_label"]
+            st.caption(f"ℹ️ {preset['explain']}")
+            with st.expander("Technische details van deze preset"):
+                st.write(f"- Drukprofiel: **{color_profile}** ({COLOR_PROFILES[color_profile]['desc']})")
+                st.write(f"- PDF-versie: **{pdf_version}**")
+                st.write(f"- PDF/X-1a: **{'Ja - ' + gts_label if pdfx1a_enabled else 'Nee'}**")
                 st.caption(
-                    "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
-                    "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
-                    "gelicentieerd Fogra/SWOP-profiel - de inktomzetting is "
-                    "getuned op het gekozen profiel, maar niet pixel-exact "
-                    "gecertificeerd. Dubbelcheck bij je drukker of dit voldoet; "
-                    "voor 100% garantie kan de drukker zelf met het officiële "
-                    "profiel converteren in Acrobat Pro."
+                    "Klopt dit niet (meer) met wat je drukker vraagt? Kies "
+                    "hierboven 'Geavanceerd: zelf instellen' om het zelf aan "
+                    "te passen, of stuur door zodat de preset bijgewerkt kan "
+                    "worden."
                 )
-        elif real_cmyk_conversion and not PIKEPDF_SUPPORT:
-            st.caption("ℹ️ Installeer 'pikepdf' voor PDF/X-1a en TrimBox/BleedBox-ondersteuning.")
+        else:
+            # --- Geavanceerde modus: de volledige, oude handmatige controls ---
+            profile_keys = list(COLOR_PROFILES.keys())
+            color_profile = st.selectbox("Drukprofiel:", profile_keys, index=0)
+            st.caption(COLOR_PROFILES[color_profile]["desc"])
+
+            real_cmyk_conversion = st.checkbox(
+                "Echte CMYK-pixelomzetting (aanbevolen)",
+                value=True,
+                help="Zet de afbeelding echt om naar CMYK-inktwaarden, getuned op "
+                     "het gekozen profiel (inktlimiet + zwartopbouw). Staat dit uit, "
+                     "dan blijft het beeld RGB en wordt CMYK alleen als label in de "
+                     "PDF-metadata gezet (oud gedrag, niet aan te raden voor drukwerk)."
+            )
+
+            if real_cmyk_conversion and PIKEPDF_SUPPORT:
+                pdfx1a_enabled = st.checkbox(
+                    "Exporteer als PDF/X-1a",
+                    value=False,
+                    help="Veel drukkers eisen PDF/X-1a, bijvoorbeeld voor gevouwde "
+                         "folders. Voegt een CMYK-OutputIntent en de verplichte "
+                         "TrimBox/BleedBox toe aan het PDF-bestand."
+                )
+                if pdfx1a_enabled:
+                    gts_label = st.selectbox(
+                        "PDF/X-1a-variant:", ["PDF/X-1a:2001", "PDF/X-1a:2003"], index=0,
+                        help="2001 (PDF 1.3) wordt door de meeste drukkerij-checks "
+                             "het breedst herkend. 2003 (PDF 1.4) is nieuwer maar "
+                             "soms strikter in checks die nog op 2001 zijn ingesteld."
+                    )
+                    pdf_version = "1.3" if gts_label.endswith("2001") else "1.4"
+                    st.caption(
+                        "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
+                        "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
+                        "gelicentieerd Fogra/SWOP-profiel - de inktomzetting is "
+                        "getuned op het gekozen profiel, maar niet pixel-exact "
+                        "gecertificeerd. Dubbelcheck bij je drukker of dit voldoet; "
+                        "voor 100% garantie kan de drukker zelf met het officiële "
+                        "profiel converteren in Acrobat Pro."
+                    )
+                else:
+                    pdf_version = st.selectbox(
+                        "PDF-versie:", ["1.3", "1.4", "1.5", "1.6", "1.7"], index=1,
+                        help="Sommige drukkers vragen expliciet een bepaalde "
+                             "PDF-versie (bv. 'upload als PDF 1.5')."
+                    )
+            elif real_cmyk_conversion and not PIKEPDF_SUPPORT:
+                st.caption("ℹ️ Installeer 'pikepdf' voor PDF/X-1a en TrimBox/BleedBox-ondersteuning.")
     
     # PDF import
     st.divider()
@@ -757,7 +849,8 @@ if uploaded_file is not None:
         with st.spinner(spinner_label):
             if convert_to_cmyk and real_cmyk_conversion:
                 pdf_data = export_to_cmyk_pdf(
-                    final_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled
+                    final_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled,
+                    pdf_version=pdf_version, gts_label=gts_label
                 )
             else:
                 pdf_data = export_to_pdf_perfect(
