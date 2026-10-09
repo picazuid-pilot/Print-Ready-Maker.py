@@ -4,3 +4,4 @@ numpy>=1.24.0
 reportlab>=4.0.0
 pdf2image>=1.16.0
 pikepdf>=8.0.0
+streamlit-image-coordinates>=0.1.6

@@ -6,6 +6,15 @@ import io
 import os
 import tempfile
 
+# Klikbare pixel-kleurpicker op het voorbeeldbeeld (naast de handmatige
+# hex-invoer) - optioneel, valt netjes terug op alleen hex als het pakket
+# een keer niet geïnstalleerd is.
+try:
+    from streamlit_image_coordinates import streamlit_image_coordinates
+    PIXEL_PICKER_SUPPORT = True
+except ImportError:
+    PIXEL_PICKER_SUPPORT = False
+
 # ReportLab importeren voor zuivere PDF generatie
 try:
     from reportlab.pdfgen import canvas
@@ -33,6 +42,15 @@ try:
 except ImportError:
     PDF_IMPORT = False
     st.info("📌 Voor PDF import: pip install pdf2image")
+
+# Een net-geklikte pixelkleur (gezet in een losse, niet-widget-gebonden
+# session_state-sleutel) hier - vóór de kleurkiezer-widget verderop wordt
+# aangemaakt - overzetten naar de widget-sleutel. Dat moet per se vóór de
+# widget-instantiatie gebeuren: Streamlit staat niet toe dat je de
+# session_state-waarde van een widget-sleutel wijzigt nadat die widget al
+# in dezelfde run is aangemaakt.
+if "_pending_randkleur_hex" in st.session_state:
+    st.session_state["bleed_randkleur_hex"] = st.session_state.pop("_pending_randkleur_hex")
 
 # Pagina-instellingen
 st.set_page_config(
@@ -829,7 +847,12 @@ with st.sidebar:
     # Kleur selectie
     chosen_rgb = (255, 255, 255)
     if "Wit / Geselecteerde Kleur" in fill_method:
-        hex_color = st.color_picker("🎨 Randkleur:", "#FFFFFF")
+        hex_color = st.color_picker(
+            "🎨 Randkleur:",
+            st.session_state.get("bleed_randkleur_hex", "#FFFFFF"),
+            key="bleed_randkleur_hex",
+        )
+        st.caption("Tip: hieronder bij de preview kun je ook een pixel uit je eigen afbeelding aanklikken.")
         chosen_rgb = tuple(int(hex_color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4))
         c, m, y, k = rgb_to_cmyk(*chosen_rgb)
         st.caption(f"CMYK: {c:.0f}%, {m:.0f}%, {y:.0f}%, {k:.0f}%")
@@ -1017,7 +1040,45 @@ if uploaded_file is not None:
         with col1:
             st.markdown('<p class="report-title">📸 Origineel</p>', unsafe_allow_html=True)
             st.image(original_img, use_container_width=True)
-        
+
+        # Pixel-kleurpicker: klik een punt in de afbeelding aan om de
+        # randkleur exact over te nemen, i.p.v. alleen een hex-code te
+        # moeten typen. Overschrijft de hex-kleurkiezer in de sidebar.
+        if "Wit / Geselecteerde Kleur" in fill_method:
+            if PIXEL_PICKER_SUPPORT:
+                with st.expander("🎯 Klik een pixel aan om de randkleur te kiezen", expanded=True):
+                    st.caption(
+                        "Klik ergens in de afbeelding hieronder - die kleur wordt "
+                        "de bleed-kleur. Handig bijvoorbeeld om de exacte "
+                        "achtergrondkleur van je ontwerp over te nemen."
+                    )
+                    pick_w = 500
+                    scale = pick_w / original_img.width
+                    preview_for_pick = original_img.resize(
+                        (pick_w, max(1, int(original_img.height * scale))),
+                        Image.Resampling.LANCZOS
+                    )
+                    click = streamlit_image_coordinates(
+                        preview_for_pick, key="bleed_pixel_picker", width=pick_w
+                    )
+                    if click is not None and click.get("x") is not None:
+                        # Coördinaten zijn relatief aan de getoonde (verkleinde)
+                        # preview - terugschalen naar het volledige origineel.
+                        src_x = min(original_img.width - 1, max(0, int(click["x"] / scale)))
+                        src_y = min(original_img.height - 1, max(0, int(click["y"] / scale)))
+                        picked_rgb = original_img.convert("RGB").getpixel((src_x, src_y))
+                        picked_hex = "#{:02X}{:02X}{:02X}".format(*picked_rgb)
+                        if st.session_state.get("bleed_randkleur_hex") != picked_hex:
+                            st.session_state["_pending_randkleur_hex"] = picked_hex
+                            st.rerun()
+                    st.caption(f"Huidige randkleur: {hex_color}")
+            else:
+                st.caption(
+                    "ℹ️ Installeer 'streamlit-image-coordinates' voor een "
+                    "klikbare pixel-kleurpicker; gebruik tot die tijd de "
+                    "hex-kleurkiezer in de zijbalk."
+                )
+
         # Verwerk bleed
         with st.spinner("🔧 Bleed toevoegen (pixel-perfect met vervaging)..."):
             # Resize naar exact output formaat
