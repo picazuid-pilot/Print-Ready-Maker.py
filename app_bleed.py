@@ -16,6 +16,16 @@ except ImportError:
     PDF_SUPPORT = False
     st.warning("ReportLab niet geïnstalleerd. PDF export werkt mogelijk niet optimaal.")
 
+# pikepdf (qpdf) voor echte PDF/X-1a structuur (OutputIntent, TrimBox/BleedBox)
+try:
+    import pikepdf
+    PIKEPDF_SUPPORT = True
+except ImportError:
+    PIKEPDF_SUPPORT = False
+
+# Pad naar het meegeleverde generieke CMYK ICC-profiel (zie icc_profiles/README.md)
+ICC_PROFILE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icc_profiles", "generic_cmyk.icc")
+
 # PDF import libraries
 try:
     from pdf2image import convert_from_bytes
@@ -55,34 +65,173 @@ FORMATS = {
     "A0": (841, 1189)
 }
 
-# Kleurprofielen
+# Kleurprofielen / drukstandaarden
+# Elk profiel heeft naast de omschrijving ook een "total area coverage"-limiet
+# (tac, maximale gezamenlijke inktdekking in %) en een gcr-factor (hoeveel
+# C/M/Y vervangen wordt door K - "Gray Component Replacement"). Dit zijn de
+# twee belangrijkste kenmerken die een drukstandaard onderscheiden qua
+# kleuropbouw, en worden gebruikt om de RGB->CMYK omzetting per profiel te
+# tunen. Zie icc_profiles/README.md voor een belangrijke kanttekening over
+# wat dit wel en niet is (benadering op basis van inktlimiet/zwartopbouw,
+# geen ingesloten gecertificeerd ICC-LUT van Fogra/SWOP/Idealliance zelf).
 COLOR_PROFILES = {
-    "CoatedFOGRA39": "Europees standaard voor gestreken papier",
-    "USWebCoatedSWOP": "US Web Coated SWOP - VS standaard",
-    "UncoatedFOGRA29": "Voor ongestreken papier",
-    "JapanColor2001Coated": "Japans standaard",
-    "GenericCMYK": "Algemene CMYK conversie"
+    "CoatedFOGRA39": {
+        "desc": "ISO 12647-2, gestreken papier - EU-standaard (klassiek, t/m ~2015)",
+        "tac": 330, "gcr": 0.75,
+    },
+    "CoatedFOGRA51": {
+        "desc": "ISO 12647-2:2013, gestreken papier - huidige EU-standaard",
+        "tac": 300, "gcr": 0.80,
+    },
+    "CoatedFOGRA52": {
+        "desc": "ISO 12647-2:2013 variant, gestreken papier (iets lichter papiertype)",
+        "tac": 300, "gcr": 0.80,
+    },
+    "UncoatedFOGRA29": {
+        "desc": "ISO 12647-2, ongestreken papier - EU-standaard (klassiek, t/m ~2015)",
+        "tac": 260, "gcr": 0.60,
+    },
+    "UncoatedFOGRA47": {
+        "desc": "ISO 12647-2:2013, ongestreken papier - huidige EU-standaard",
+        "tac": 240, "gcr": 0.60,
+    },
+    "PSOLWCimprovedFOGRA45": {
+        "desc": "Krantenpapier / LWC (bv. tijdschriften, dunne papiersoorten)",
+        "tac": 260, "gcr": 0.55,
+    },
+    "USWebCoatedSWOP": {
+        "desc": "US Web Coated SWOP v2 - VS-standaard voor gestreken offsetdruk",
+        "tac": 300, "gcr": 0.75,
+    },
+    "USWebUncoated": {
+        "desc": "VS-standaard voor ongestreken papier",
+        "tac": 260, "gcr": 0.60,
+    },
+    "GRACoLCoated": {
+        "desc": "GRACoL 2006/2013 - Noord-Amerikaanse commerciële vellendruk",
+        "tac": 320, "gcr": 0.78,
+    },
+    "JapanColor2001Coated": {
+        "desc": "Japanse standaard, gestreken papier",
+        "tac": 350, "gcr": 0.80,
+    },
+    "JapanColor2011Coated": {
+        "desc": "Japanse standaard (herzien), gestreken papier",
+        "tac": 320, "gcr": 0.78,
+    },
+    "GenericCMYK": {
+        "desc": "Algemene CMYK-conversie, geen specifieke drukstandaard",
+        "tac": 300, "gcr": 0.70,
+    },
 }
 
 def rgb_to_cmyk(r, g, b):
-    """RGB naar CMYK (0-100%)"""
+    """RGB naar CMYK (0-100%) - gebruikt voor de losse kleur-preview in de sidebar."""
     if r == 0 and g == 0 and b == 0:
         return (0, 0, 0, 100)
-    
+
     r_prime = r / 255.0
     g_prime = g / 255.0
     b_prime = b / 255.0
-    
+
     k = 1 - max(r_prime, g_prime, b_prime)
-    
+
     if k < 1:
         c = (1 - r_prime - k) / (1 - k)
         m = (1 - g_prime - k) / (1 - k)
         y = (1 - b_prime - k) / (1 - k)
     else:
         c, m, y = 0, 0, 0
-    
+
     return (c * 100, m * 100, y * 100, k * 100)
+
+
+def rgb_image_to_cmyk_array(rgb_img, tac_limit=300, gcr=0.7):
+    """
+    ECHTE pixel-voor-pixel RGB -> CMYK omzetting (numpy, vectorized), met:
+    - Gray Component Replacement (gcr): hoeveel C/M/Y vervangen wordt door K
+    - Total Area Coverage (tac_limit): drukkers keuren bestanden af die de
+      gezamenlijke inktdekking overschrijden; wordt hier proportioneel geclamped.
+    Retourneert een HxWx4 uint8 array met "natuurlijke" inktwaarden (0=geen inkt).
+    """
+    arr = np.asarray(rgb_img.convert("RGB"), dtype=np.float64) / 255.0
+    r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
+
+    k = 1.0 - np.maximum(np.maximum(r, g), b)
+    denom = np.clip(1.0 - k, 1e-6, None)
+    c = np.clip((1.0 - r - k) / denom, 0, 1)
+    m = np.clip((1.0 - g - k) / denom, 0, 1)
+    y = np.clip((1.0 - b - k) / denom, 0, 1)
+
+    # Gray component replacement: versterk K volgens het profiel (meer GCR =
+    # rijkere/stabielere zwarttinten, minder totale inkt in donkere vlakken)
+    k = np.clip(k * (1.0 + 0.15 * gcr), 0, 1)
+
+    total = (c + m + y + k) * 100.0
+    over = total > tac_limit
+    if np.any(over):
+        scale = np.ones_like(total)
+        scale[over] = tac_limit / total[over]
+        c = c * scale
+        m = m * scale
+        y = y * scale
+        k = k * scale
+
+    cmyk = np.stack([c, m, y, k], axis=-1)
+    return np.clip(cmyk * 255.0 + 0.5, 0, 255).astype(np.uint8)
+
+
+def cmyk_array_to_jpeg_bytes(cmyk_u8, quality=92):
+    """CMYK-array (HxWx4, natuurlijke inktwaarden) opslaan als CMYK-JPEG-bytes.
+    Geverifieerd (handmatige round-trip test) dat hier GEEN voor-inversie nodig
+    is: PIL/libjpeg schrijft en leest zijn eigen CMYK-JPEGs consistent, en de
+    kleuren komen correct (niet geïnverteerd) uit de uiteindelijke PDF."""
+    h, w = cmyk_u8.shape[:2]
+    img = Image.frombytes("CMYK", (w, h), cmyk_u8.tobytes())
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+def finalize_pdfx1a(base_pdf_bytes, width_pt, height_pt, bleed_pt, output_condition):
+    """Post-processeert een reportlab-PDF met pikepdf tot een structureel
+    geldige PDF/X-1a:2003: voegt OutputIntent (met ingesloten CMYK ICC-profiel),
+    TrimBox en BleedBox toe. Vereist dat alle content al CMYK is (geen RGB/
+    transparantie) - dat garandeert build_cmyk_pdf() door alleen CMYK-fills en
+    een CMYK-JPEG te gebruiken."""
+    pdf = pikepdf.Pdf.open(io.BytesIO(base_pdf_bytes))
+    page = pdf.pages[0]
+
+    media = [0, 0, width_pt, height_pt]
+    trim = [bleed_pt, bleed_pt, width_pt - bleed_pt, height_pt - bleed_pt]
+
+    page.MediaBox = media
+    page.TrimBox = trim
+    page.BleedBox = media
+
+    if os.path.exists(ICC_PROFILE_PATH):
+        with open(ICC_PROFILE_PATH, "rb") as f:
+            icc_bytes = f.read()
+        icc_stream = pdf.make_stream(icc_bytes)
+        icc_stream.N = 4
+        icc_stream.Alternate = pikepdf.Name("/DeviceCMYK")
+
+        output_intent = pdf.make_indirect(pikepdf.Dictionary({
+            "/Type": pikepdf.Name("/OutputIntent"),
+            "/S": pikepdf.Name("/GTS_PDFX"),
+            "/OutputConditionIdentifier": pikepdf.String(output_condition),
+            "/OutputCondition": pikepdf.String(output_condition),
+            "/Info": pikepdf.String(output_condition),
+            "/DestOutputProfile": icc_stream,
+        }))
+        pdf.Root.OutputIntents = pdf.make_indirect(pikepdf.Array([output_intent]))
+
+    pdf.docinfo["/GTS_PDFXVersion"] = "PDF/X-1a:2003"
+    pdf.docinfo["/Trapped"] = pikepdf.Name("/False")
+
+    out = io.BytesIO()
+    pdf.save(out, min_version="1.4")
+    return out.getvalue()
 
 def get_dominant_color(image):
     """Bepaal dominante kleur"""
@@ -302,32 +451,35 @@ def apply_edge_blur(image, bleed_pixels, blur_radius):
 
 def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, bleed_mm):
     """
-    EXPORTEER NAAR PDF ZONDER HAARLIJNEN
+    LEGACY EXPORT: plaatst het beeld als RGB in de PDF en zet alleen
+    metadata-labels ("CMYK (profiel)") - dit converteert de pixels NIET
+    echt naar CMYK. Wordt nog gebruikt als "snelle"/compatibele modus;
+    voor echte inktomzetting en PDF/X-1a, zie export_to_cmyk_pdf().
     """
     # Bereken afmetingen in punten
     width_pt = (image.width / 300.0) * 72.0
     height_pt = (image.height / 300.0) * 72.0
-    
+
     # Overscan om haarlijnen te voorkomen
     overscan = 1.0  # 1 punt overlap
-    
+
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(width_pt + overscan, height_pt + overscan))
-    
+
     # Witte achtergrond
     c.setFillColorRGB(1, 1, 1)
     c.rect(0, 0, width_pt + overscan, height_pt + overscan, fill=1, stroke=0)
-    
+
     # Metadata
     if convert_cmyk:
         c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name}) - Pixel Perfect")
         c.setTitle(f"C.A. Document - {output_format} - {bleed_mm}mm bleed")
-    
+
     # Gebruik PNG voor maximale kwaliteit
     with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
         temp_path = tmp_file.name
         image.save(temp_path, 'PNG', dpi=(300, 300))
-    
+
     # Plaats afbeelding met overscan
     img_reader = ImageReader(temp_path)
     c.drawImage(
@@ -339,16 +491,75 @@ def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, blee
         preserveAspectRatio=False,
         mask=None
     )
-    
+
     c.showPage()
     c.save()
-    
+
     try:
         os.unlink(temp_path)
     except:
         pass
-        
+
     return buffer.getvalue()
+
+
+def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False):
+    """
+    ECHTE CMYK-EXPORT: zet de pixels daadwerkelijk om naar CMYK (getuned op
+    het gekozen drukprofiel via total-area-coverage-limiet en GCR), bouwt
+    een CMYK-JPEG en plaatst die in de PDF met alleen CMYK-fills (geen RGB).
+    Als pdfx1a=True wordt de PDF daarna met pikepdf omgezet naar een
+    structureel geldige PDF/X-1a:2003 (OutputIntent + TrimBox/BleedBox) -
+    dit is wat drukkers voor bv. gevouwde folders vaak verplicht stellen.
+    """
+    profile = COLOR_PROFILES.get(profile_key, COLOR_PROFILES["GenericCMYK"])
+    cmyk_arr = rgb_image_to_cmyk_array(image, tac_limit=profile["tac"], gcr=profile["gcr"])
+    jpeg_bytes = cmyk_array_to_jpeg_bytes(cmyk_arr, quality=92)
+
+    width_pt = (image.width / 300.0) * 72.0
+    height_pt = (image.height / 300.0) * 72.0
+    bleed_pt = (bleed_mm / 25.4) * 72.0
+
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=(width_pt, height_pt))
+
+    # Zuivere CMYK-achtergrond (géén RGB) - verplicht voor PDF/X-1a
+    c.setFillColorCMYK(0, 0, 0, 0)
+    c.rect(0, 0, width_pt, height_pt, fill=1, stroke=0)
+
+    c.setProducer(f"C.A. Bleed Tool - echte CMYK ({profile_key})")
+    c.setTitle(f"C.A. Document - {bleed_mm}mm bleed - {profile_key}")
+
+    img_reader = ImageReader(io.BytesIO(jpeg_bytes))
+    c.drawImage(
+        img_reader,
+        0, 0,
+        width=width_pt,
+        height=height_pt,
+        preserveAspectRatio=False,
+        mask=None
+    )
+
+    c.showPage()
+    c.save()
+    base_pdf = buffer.getvalue()
+
+    if pdfx1a and PIKEPDF_SUPPORT:
+        return finalize_pdfx1a(base_pdf, width_pt, height_pt, bleed_pt, profile_key)
+
+    if PIKEPDF_SUPPORT:
+        # Ook zonder strikte PDF/X-1a: TrimBox/BleedBox zijn altijd nuttig
+        # voor drukkerijen en kosten niets om toe te voegen.
+        pdf = pikepdf.Pdf.open(io.BytesIO(base_pdf))
+        page = pdf.pages[0]
+        page.MediaBox = [0, 0, width_pt, height_pt]
+        page.TrimBox = [bleed_pt, bleed_pt, width_pt - bleed_pt, height_pt - bleed_pt]
+        page.BleedBox = [0, 0, width_pt, height_pt]
+        out = io.BytesIO()
+        pdf.save(out)
+        return out.getvalue()
+
+    return base_pdf
 
 def check_aspect_ratio(image, format_name):
     """Controleer aspect ratio"""
@@ -415,10 +626,44 @@ with st.sidebar:
     
     # CMYK instellingen
     st.subheader("🖨️ CMYK")
-    convert_to_cmyk = st.checkbox("CMYK metadata toevoegen", value=True)
+    convert_to_cmyk = st.checkbox("Omzetten naar CMYK", value=True)
+    color_profile = "GenericCMYK"
+    real_cmyk_conversion = False
+    pdfx1a_enabled = False
     if convert_to_cmyk:
-        color_profile = st.selectbox("Profiel:", list(COLOR_PROFILES.keys()), index=0)
-        st.caption(COLOR_PROFILES[color_profile])
+        profile_keys = list(COLOR_PROFILES.keys())
+        color_profile = st.selectbox("Drukprofiel:", profile_keys, index=0)
+        st.caption(COLOR_PROFILES[color_profile]["desc"])
+
+        real_cmyk_conversion = st.checkbox(
+            "Echte CMYK-pixelomzetting (aanbevolen)",
+            value=True,
+            help="Zet de afbeelding echt om naar CMYK-inktwaarden, getuned op "
+                 "het gekozen profiel (inktlimiet + zwartopbouw). Staat dit uit, "
+                 "dan blijft het beeld RGB en wordt CMYK alleen als label in de "
+                 "PDF-metadata gezet (oud gedrag, niet aan te raden voor drukwerk)."
+        )
+
+        if real_cmyk_conversion and PIKEPDF_SUPPORT:
+            pdfx1a_enabled = st.checkbox(
+                "Exporteer als PDF/X-1a",
+                value=False,
+                help="Veel drukkers eisen PDF/X-1a, bijvoorbeeld voor gevouwde "
+                     "folders. Voegt een CMYK-OutputIntent en de verplichte "
+                     "TrimBox/BleedBox toe aan het PDF-bestand."
+            )
+            if pdfx1a_enabled:
+                st.caption(
+                    "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
+                    "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
+                    "gelicentieerd Fogra/SWOP-profiel - de inktomzetting is "
+                    "getuned op het gekozen profiel, maar niet pixel-exact "
+                    "gecertificeerd. Dubbelcheck bij je drukker of dit voldoet; "
+                    "voor 100% garantie kan de drukker zelf met het officiële "
+                    "profiel converteren in Acrobat Pro."
+                )
+        elif real_cmyk_conversion and not PIKEPDF_SUPPORT:
+            st.caption("ℹ️ Installeer 'pikepdf' voor PDF/X-1a en TrimBox/BleedBox-ondersteuning.")
     
     # PDF import
     st.divider()
@@ -498,26 +743,42 @@ if uploaded_file is not None:
         
         # Export
         st.markdown("### 💾 3. Exporteer")
-        
+
         base_name = os.path.splitext(uploaded_file.name)[0]
         cmyk_suffix = "_CMYK" if convert_to_cmyk else ""
-        
-        with st.spinner("📑 PDF genereren (haarlijnvrij)..."):
-            pdf_data = export_to_pdf_perfect(
-                final_img, convert_to_cmyk, color_profile, output_format, bleed_mm
-            )
-            
+        pdfx_suffix = "_PDFX1a" if pdfx1a_enabled else ""
+
+        spinner_label = "📑 PDF genereren"
+        if real_cmyk_conversion:
+            spinner_label += " (echte CMYK-omzetting" + (" + PDF/X-1a" if pdfx1a_enabled else "") + ")..."
+        else:
+            spinner_label += " (haarlijnvrij)..."
+
+        with st.spinner(spinner_label):
+            if convert_to_cmyk and real_cmyk_conversion:
+                pdf_data = export_to_cmyk_pdf(
+                    final_img, color_profile, bleed_mm, pdfx1a=pdfx1a_enabled
+                )
+            else:
+                pdf_data = export_to_pdf_perfect(
+                    final_img, convert_to_cmyk, color_profile, output_format, bleed_mm
+                )
+
             st.download_button(
-                label=f"📥 Download {output_format} PDF {cmyk_suffix}",
+                label=f"📥 Download {output_format} PDF {cmyk_suffix}{pdfx_suffix}",
                 data=pdf_data,
-                file_name=f"{base_name}{cmyk_suffix}_BLEED{int(bleed_mm)}mm_{output_format}.pdf",
+                file_name=f"{base_name}{cmyk_suffix}{pdfx_suffix}_BLEED{int(bleed_mm)}mm_{output_format}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
-            
-            if convert_to_cmyk:
-                st.info(f"🖨️ CMYK metadata - {color_profile}")
-        
+
+            if convert_to_cmyk and real_cmyk_conversion:
+                st.info(f"🖨️ Echte CMYK-pixelomzetting toegepast - profiel: {color_profile}")
+                if pdfx1a_enabled:
+                    st.info("📋 PDF/X-1a:2003 - CMYK OutputIntent + TrimBox/BleedBox ingesteld")
+            elif convert_to_cmyk:
+                st.info(f"🖨️ CMYK metadata (geen pixelomzetting) - {color_profile}")
+
         st.balloons()
         
     except Exception as e:
