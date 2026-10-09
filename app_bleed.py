@@ -706,9 +706,8 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
 
     return base_pdf
 
-def check_aspect_ratio(image, format_name):
-    """Controleer aspect ratio"""
-    format_mm = FORMATS[format_name]
+def check_aspect_ratio(image, format_mm):
+    """Controleer aspect ratio. format_mm is een (breedte, hoogte) tuple in mm."""
     target_ratio = format_mm[0] / format_mm[1]
     image_ratio = image.width / image.height
     ratio_diff = abs((image_ratio - target_ratio) / target_ratio) * 100
@@ -729,15 +728,37 @@ with st.sidebar:
     st.header("🔧 Drukwerk Instellingen")
     
     # Input formaat (originele bestandsformaat)
-    input_format = st.selectbox("📥 Input Formaat (Origineel bestand):", list(FORMATS.keys()), index=1)
-    st.caption("Het formaat waarin je bestand is gemaakt")
-    
+    format_choice_keys = list(FORMATS.keys()) + ["Aangepast (zelf mm invullen)"]
+    input_format = st.selectbox("📥 Input Formaat (Origineel bestand):", format_choice_keys, index=1)
+    if input_format == "Aangepast (zelf mm invullen)":
+        in_col1, in_col2 = st.columns(2)
+        in_custom_w = in_col1.number_input("Breedte (mm):", min_value=1.0, value=210.0, step=1.0, key="in_w")
+        in_custom_h = in_col2.number_input("Hoogte (mm):", min_value=1.0, value=297.0, step=1.0, key="in_h")
+        in_format_mm = (in_custom_w, in_custom_h)
+    else:
+        in_orientation = st.radio(
+            "Oriëntatie (input):", ["Staand", "Liggend"], horizontal=True, key="in_orient"
+        )
+        base_w, base_h = FORMATS[input_format]
+        in_format_mm = (base_w, base_h) if in_orientation == "Staand" else (base_h, base_w)
+    st.caption(f"Het formaat waarin je bestand is gemaakt: {in_format_mm[0]:.0f} × {in_format_mm[1]:.0f} mm")
+
     st.divider()
-    
+
     # Output formaat (gewenste output)
-    output_format = st.selectbox("📤 Output Formaat (Gewenste output):", list(FORMATS.keys()), index=1)
-    width_mm, height_mm = FORMATS[output_format]
-    st.caption(f"Output wordt: {width_mm} × {height_mm} mm")
+    output_format = st.selectbox("📤 Output Formaat (Gewenste output):", format_choice_keys, index=1)
+    if output_format == "Aangepast (zelf mm invullen)":
+        out_col1, out_col2 = st.columns(2)
+        out_custom_w = out_col1.number_input("Breedte (mm):", min_value=1.0, value=210.0, step=1.0, key="out_w")
+        out_custom_h = out_col2.number_input("Hoogte (mm):", min_value=1.0, value=297.0, step=1.0, key="out_h")
+        width_mm, height_mm = out_custom_w, out_custom_h
+    else:
+        out_orientation = st.radio(
+            "Oriëntatie (output):", ["Staand", "Liggend"], horizontal=True, key="out_orient"
+        )
+        base_w, base_h = FORMATS[output_format]
+        width_mm, height_mm = (base_w, base_h) if out_orientation == "Staand" else (base_h, base_w)
+    st.caption(f"Output wordt: {width_mm:.0f} × {height_mm:.0f} mm")
     
     st.divider()
     
@@ -926,7 +947,7 @@ if uploaded_file is not None:
         
         # Aspect ratio check
         st.markdown("### 📏 2. Formaat check")
-        aspect_msg = check_aspect_ratio(original_img, output_format)
+        aspect_msg = check_aspect_ratio(original_img, (width_mm, height_mm))
         if "⚠️" in aspect_msg:
             st.warning(aspect_msg)
         else:
