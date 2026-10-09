@@ -212,15 +212,16 @@ PRINTER_PRESETS = {
     },
     "FlyerAlarm": {
         "profile": "CoatedFOGRA39",
-        "pdfx1a": False,
-        "pdf_version": "1.4",
-        "gts_label": "PDF/X-1a:2003",
-        "confirmed": False,
-        "explain": "Kon de exacte PDF-/kleurprofieleisen niet van hun site "
-                   "bevestigen (JavaScript-site, niet uit te lezen). Valt "
-                   "terug op veilige standaardinstellingen - check zelf hun "
-                   "aanleverspecificaties/Datenblatt voor zekerheid.",
-        "source": None,
+        "pdfx1a": True,
+        "pdf_version": "1.6",
+        "gts_label": "PDF/X-4",
+        "confirmed": True,
+        "explain": "FlyerAlarm vraagt bij voorkeur PDF/X-4 (PDF/X-3 wordt ook "
+                   "geaccepteerd), met kleurprofiel ISO Coated v2 / FOGRA39, "
+                   "CMYK, lettertypes ingesloten/naar paden omgezet, min. "
+                   "300 ppi, geen wachtwoord, geen snijtekens/extra marge "
+                   "toevoegen (gebruik hun eigen werktekening/informatiesheet).",
+        "source": "flyeralarm.com - eigen aanleverspecificaties/FAQ, aangeleverd door gebruiker (2026-10-09).",
     },
     "Vistaprint.nl": {
         "profile": "CoatedFOGRA39",
@@ -814,7 +815,7 @@ with st.sidebar:
                 if tac_override is not None:
                     st.write(f"- Max. inktdekking (afwijkend van standaardprofiel): **{tac_override}%**")
                 st.write(f"- PDF-versie: **{pdf_version}**")
-                st.write(f"- PDF/X-1a: **{'Ja - ' + gts_label if pdfx1a_enabled else 'Nee'}**")
+                st.write(f"- PDF/X: **{gts_label if pdfx1a_enabled else 'Nee'}**")
                 st.caption(
                     "Klopt dit niet (meer) met wat je drukker vraagt? Kies "
                     "hierboven 'Geavanceerd: zelf instellen' om het zelf aan "
@@ -838,20 +839,30 @@ with st.sidebar:
 
             if real_cmyk_conversion and PIKEPDF_SUPPORT:
                 pdfx1a_enabled = st.checkbox(
-                    "Exporteer als PDF/X-1a",
+                    "Exporteer als PDF/X",
                     value=False,
-                    help="Veel drukkers eisen PDF/X-1a, bijvoorbeeld voor gevouwde "
-                         "folders. Voegt een CMYK-OutputIntent en de verplichte "
-                         "TrimBox/BleedBox toe aan het PDF-bestand."
+                    help="Veel drukkers eisen een PDF/X-variant, bijvoorbeeld voor "
+                         "gevouwde folders. Voegt een CMYK-OutputIntent en de "
+                         "verplichte TrimBox/BleedBox toe aan het PDF-bestand."
                 )
                 if pdfx1a_enabled:
                     gts_label = st.selectbox(
-                        "PDF/X-1a-variant:", ["PDF/X-1a:2001", "PDF/X-1a:2003"], index=0,
-                        help="2001 (PDF 1.3) wordt door de meeste drukkerij-checks "
-                             "het breedst herkend. 2003 (PDF 1.4) is nieuwer maar "
-                             "soms strikter in checks die nog op 2001 zijn ingesteld."
+                        "PDF/X-variant:",
+                        ["PDF/X-1a:2001", "PDF/X-1a:2003", "PDF/X-3:2003", "PDF/X-4"],
+                        index=0,
+                        help="PDF/X-1a:2001 (PDF 1.3) wordt door de meeste "
+                             "drukkerij-checks het breedst herkend - veilige keuze "
+                             "als je het niet zeker weet. PDF/X-4 (PDF 1.6) is de "
+                             "modernste variant en wordt door sommige drukkers "
+                             "(bv. FlyerAlarm) juist als voorkeur gevraagd, met "
+                             "PDF/X-3 als hun fallback."
                     )
-                    pdf_version = "1.3" if gts_label.endswith("2001") else "1.4"
+                    pdf_version = {
+                        "PDF/X-1a:2001": "1.3",
+                        "PDF/X-1a:2003": "1.4",
+                        "PDF/X-3:2003": "1.4",
+                        "PDF/X-4": "1.6",
+                    }[gts_label]
                     st.caption(
                         "⚠️ Dit gebruikt een generiek, vrij herdistribueerbaar CMYK "
                         "ICC-profiel (Ghostscript/Artifex) als OutputIntent, géén "
@@ -982,7 +993,7 @@ if uploaded_file is not None:
             if convert_to_cmyk and real_cmyk_conversion:
                 st.info(f"🖨️ Echte CMYK-pixelomzetting toegepast - profiel: {color_profile}")
                 if pdfx1a_enabled:
-                    st.info("📋 PDF/X-1a:2003 - CMYK OutputIntent + TrimBox/BleedBox ingesteld")
+                    st.info(f"📋 {gts_label} (PDF {pdf_version}) - CMYK OutputIntent + TrimBox/BleedBox ingesteld")
             elif convert_to_cmyk:
                 st.info(f"🖨️ CMYK metadata (geen pixelomzetting) - {color_profile}")
 
