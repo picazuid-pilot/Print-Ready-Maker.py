@@ -54,7 +54,7 @@ if "_pending_randkleur_hex" in st.session_state:
 
 # Pagina-instellingen
 st.set_page_config(
-    page_title="C.A. Professional Bleed Tool - Pixel Perfect",
+    page_title="Print-Ready-Maker",
     page_icon="📐",
     layout="wide"
 )
@@ -669,7 +669,7 @@ def export_to_pdf_perfect(image, convert_cmyk, profile_name, output_format, blee
 
     # Metadata
     if convert_cmyk:
-        c.setProducer(f"C.A. Bleed Tool - CMYK ({profile_name}) - Pixel Perfect")
+        c.setProducer(f"Print-Ready-Maker - CMYK ({profile_name})")
         c.setTitle(f"C.A. Document - {output_format} - {bleed_mm}mm bleed")
 
     # Gebruik PNG voor maximale kwaliteit
@@ -786,7 +786,7 @@ def export_to_cmyk_pdf(image, profile_key, bleed_mm, pdfx1a=False,
     c.setFillColorCMYK(0, 0, 0, 0)
     c.rect(0, 0, width_pt, height_pt, fill=1, stroke=0)
 
-    c.setProducer(f"C.A. Bleed Tool - echte CMYK ({profile_key})")
+    c.setProducer(f"Print-Ready-Maker - echte CMYK ({profile_key})")
     c.setTitle(f"C.A. Document - {bleed_mm}mm bleed - {profile_key}")
 
     img_reader = ImageReader(io.BytesIO(jpeg_bytes))
@@ -837,7 +837,7 @@ def check_aspect_ratio(image, format_mm):
 # HOOFD INTERFACE
 # ============================================================================
 
-st.title("📐 C.A. Professional Bleed Tool - Pixel Perfect")
+st.title("📐 Print-Ready-Maker")
 st.subheader("Professionele afloopruimte met exacte pixel matching en vloeiende overgangen")
 
 with st.sidebar:
@@ -1247,6 +1247,6 @@ else:
 
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; color: #666;'>© 2024 C.A. Professional Bleed Tool | Pixel Perfect voor drukwerk</p>", 
+    "<p style='text-align: center; color: #666;'>Print-Ready-Maker | Drukklare PDF met afloop en CMYK</p>", 
     unsafe_allow_html=True
 )
