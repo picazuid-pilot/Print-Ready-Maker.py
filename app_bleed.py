@@ -273,6 +273,20 @@ PRINTER_PRESETS = {
     "Geavanceerd: zelf instellen": None,
 }
 
+# Korte drukkersnaam die achter de bestandsnaam van de export komt, zodat je
+# in je map direct ziet voor welke drukker een bestand gemaakt is
+# (bv. "432 Informatiefolders CA - Over CA - Drukwerkdeal.pdf").
+PRINTER_FILENAME_TAGS = {
+    "Bizay - gevouwen folders (PDF/X-1a)": "Bizay",
+    "Onlineprinters.nl (PDF 1.5 + Fogra CMYK)": "Onlineprinters",
+    "Flyerzone.nl": "Flyerzone",
+    "Helloprint": "Helloprint",
+    "Drukwerkdeal.nl": "Drukwerkdeal",
+    "FlyerAlarm": "FlyerAlarm",
+    "Vistaprint.nl": "Vistaprint",
+    "Groenprint.nl": "Groenprint",
+}
+
 def rgb_to_cmyk(r, g, b):
     """RGB naar CMYK (0-100%) - gebruikt voor de losse kleur-preview in de sidebar."""
     if r == 0 and g == 0 and b == 0:
@@ -921,6 +935,7 @@ with st.sidebar:
     gts_label = "PDF/X-1a:2003"
     tac_override = None
     gcr_override = None
+    printer_tag = None
 
     if convert_to_cmyk:
         preset_keys = list(PRINTER_PRESETS.keys())
@@ -932,6 +947,7 @@ with st.sidebar:
                  "en de juiste instellingen worden automatisch gezet."
         )
         preset = PRINTER_PRESETS[preset_choice]
+        printer_tag = PRINTER_FILENAME_TAGS.get(preset_choice)
 
         if preset is not None:
             # --- Eenvoudige modus: alles automatisch, niets technisch te kiezen ---
@@ -1169,6 +1185,11 @@ if uploaded_file is not None:
         base_name = os.path.splitext(uploaded_file.name)[0]
         cmyk_suffix = "_CMYK" if convert_to_cmyk else ""
         pdfx_suffix = "_PDFX1a" if pdfx1a_enabled else ""
+        if printer_tag:
+            # Drukker in de titel: "<naam> - <Drukker>.pdf"
+            export_file_name = f"{base_name} - {printer_tag}.pdf"
+        else:
+            export_file_name = f"{base_name}{cmyk_suffix}{pdfx_suffix}_BLEED{int(bleed_mm)}mm_{output_format}.pdf"
 
         spinner_label = f"📑 PDF genereren ({len(final_imgs)} pagina('s))"
         if real_cmyk_conversion:
@@ -1195,7 +1216,7 @@ if uploaded_file is not None:
             st.download_button(
                 label=f"📥 Download {output_format} PDF {cmyk_suffix}{pdfx_suffix}",
                 data=pdf_data,
-                file_name=f"{base_name}{cmyk_suffix}{pdfx_suffix}_BLEED{int(bleed_mm)}mm_{output_format}.pdf",
+                file_name=export_file_name,
                 mime="application/pdf",
                 use_container_width=True
             )
